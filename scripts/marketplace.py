@@ -24,6 +24,7 @@ REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SIGNER_WORKFLOW = (
     "WinIslandProject/PluginMarketplace/.github/workflows/build-plugin.yml"
 )
+SUPPORTED_ABI_VERSIONS = frozenset({1, 2})
 
 
 @dataclass(frozen=True)
@@ -298,8 +299,14 @@ def validate_release(registration: Registration, verify_attestation: bool = True
                 raise ValueError(f"{registration.id}: manifest ID does not match")
             if manifest.get("github-link", "").rstrip("/") != expected_repo:
                 raise ValueError(f"{registration.id}: manifest repository does not match")
-            if manifest.get("abi-version") != 1:
-                raise ValueError(f"{registration.id}: only ABI v1 is accepted")
+            abi_version = manifest.get("abi-version")
+            if abi_version not in SUPPORTED_ABI_VERSIONS:
+                supported = ", ".join(
+                    f"v{version}" for version in sorted(SUPPORTED_ABI_VERSIONS)
+                )
+                raise ValueError(
+                    f"{registration.id}: supported plugin ABIs are {supported}"
+                )
             required = ["name", "author", "version", "description"]
             if any(not isinstance(manifest.get(key), str) or not manifest[key] for key in required):
                 raise ValueError(f"{registration.id}: manifest metadata is incomplete")

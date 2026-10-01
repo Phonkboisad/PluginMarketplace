@@ -14,6 +14,9 @@ validated automatically.
 - The release asset must be immutable for a version. Publish a new version
   instead of replacing a published package.
 - The plugin must not be obfuscated or download executable code at runtime.
+- The release validator accepts ABI v1 and ABI v2 manifests. New plugins
+  should target ABI v2, which is the current WinIsland host ABI; the catalog
+  records the package ABI so hosts can filter incompatible entries.
 
 ## Registration format
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 PLUGIN_ID = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 VERSION = re.compile(r"^[A-Za-z0-9.+-]{1,31}$")
+SUPPORTED_ABI_VERSIONS = (1, 2)
 
 
 def manifest_value(text: str, key: str) -> str:
@@ -30,7 +31,7 @@ class PluginMetadata(ctypes.Structure):
     ]
 
 
-class PluginDescriptor(ctypes.Structure):
+class PluginDescriptorV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
         ("abi_version", ctypes.c_uint32),
@@ -42,18 +43,32 @@ class PluginDescriptor(ctypes.Structure):
     ]
 
 
+class PluginDescriptorV2(ctypes.Structure):
+    _fields_ = PluginDescriptorV1._fields_ + [("on_tick", ctypes.c_void_p)]
+
+
+DESCRIPTOR_TYPES = {
+    1: ("winisland_plugin_entry_v1", PluginDescriptorV1),
+    2: ("winisland_plugin_entry_v2", PluginDescriptorV2),
+}
+
+
 def fixed_text(value: ctypes.Array[ctypes.c_ubyte]) -> str:
     return bytes(value).split(b"\0", 1)[0].decode("utf-8")
 
 
-def read_descriptor(dll: Path) -> tuple[int, int, bool, dict[str, str]]:
+def read_descriptor(dll: Path, expected_abi: int) -> tuple[int, int, bool, dict[str, str]]:
+    try:
+        symbol, descriptor_type = DESCRIPTOR_TYPES[expected_abi]
+    except KeyError as error:
+        raise ValueError(f"unsupported plugin ABI version {expected_abi}") from error
     library = ctypes.WinDLL(str(dll))
     try:
         try:
-            entrypoint = library.winisland_plugin_entry_v1
+            entrypoint = getattr(library, symbol)
         except AttributeError as error:
-            raise ValueError("plugin DLL has no ABI v1 entry point") from error
-        entrypoint.restype = ctypes.POINTER(PluginDescriptor)
+            raise ValueError(f"plugin DLL has no ABI v{expected_abi} entry point") from error
+        entrypoint.restype = ctypes.POINTER(descriptor_type)
         pointer = entrypoint()
         if not pointer:
             raise ValueError("plugin DLL returned a null descriptor")
@@ -74,16 +89,26 @@ def validate_descriptor(archive: zipfile.ZipFile, manifest: str) -> None:
     entry = manifest_value(manifest, "entry")
     if Path(entry).name != entry or not entry.lower().endswith(".dll"):
         raise ValueError("plugin.yml entry must be a root-level DLL")
+    try:
+        abi_version = int(manifest_value(manifest, "abi-version"))
+    except ValueError as error:
+        raise ValueError("plugin.yml has an invalid abi-version") from error
+    if abi_version not in SUPPORTED_ABI_VERSIONS:
+        supported = ", ".join(str(version) for version in SUPPORTED_ABI_VERSIONS)
+        raise ValueError(f"plugin.yml abi-version must be one of: {supported}")
     with tempfile.TemporaryDirectory() as directory:
         dll = Path(directory) / entry
         dll.write_bytes(archive.read(entry))
-        struct_size, abi_version, lifecycle_complete, metadata = read_descriptor(dll)
+        struct_size, descriptor_abi, lifecycle_complete, metadata = read_descriptor(
+            dll, abi_version
+        )
+    descriptor_type = DESCRIPTOR_TYPES[abi_version][1]
     if (
-        struct_size < ctypes.sizeof(PluginDescriptor)
-        or abi_version != 1
+        struct_size < ctypes.sizeof(descriptor_type)
+        or descriptor_abi != abi_version
         or not lifecycle_complete
     ):
-        raise ValueError("plugin DLL has an invalid ABI v1 descriptor")
+        raise ValueError(f"plugin DLL has an invalid ABI v{abi_version} descriptor")
     for field, declared in metadata.items():
         packaged = manifest_value(manifest, field)
         if packaged != declared:

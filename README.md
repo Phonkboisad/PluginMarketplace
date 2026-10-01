@@ -11,3 +11,7 @@ This repository is the curated source registry for the WinIsland plugin market.
 4. Wait for the automated checks and maintainer review.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete format and release setup.
+
+The marketplace validates both ABI v1 and ABI v2 plugin packages. New plugins
+should use ABI v2, which is the current WinIsland host ABI; clients filter
+catalog entries whose ABI does not match the running host.
